@@ -48,6 +48,11 @@ public_c_files:
 # Each guarded definition becomes NAME_<SELECTOR> in its own unit.
 selector_prefixes: [FONT_]
 
+# Units listed here are exploded into one object per symbol after assignment; symbols that
+# depend on each other cyclically are merged automatically (see Gen.explode in tools/split.py).
+per_function: [multiplayer, ia_control, rn_file, rn_dir, rn_tcp, rn_shell, rn_misc, cpm_drive,
+               vdp_init, vdp_screen, vdp_sprite, vdp_gfx, direntry, vt52]
+
 # Fallbacks when no rule matches
 file_defaults:
   NabuTracker.c: nabutracker

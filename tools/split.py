@@ -601,8 +601,9 @@ class Gen:
         return self.default_unit
 
     def add_chunk(self, unit, text, guards, origin_include, src, symbol=None, kind=None):
-        u = self.units.setdefault(unit, {'chunks': [], 'inc': [], 'guards': []})
+        u = self.units.setdefault(unit, {'chunks': [], 'inc': [], 'guards': [], 'syms': []})
         u['chunks'].append(wrap(guards, text))
+        u['syms'].append(symbol)
         u['guards'].append(guards)
         if origin_include and origin_include not in u['inc']:
             u['inc'].append(origin_include)
@@ -801,6 +802,83 @@ class Gen:
                     variant_protos.append((it.name, vname, dm, defset, make_proto(text), it.guards))
         # prototype for variants' base is the normal one in the header
 
+    # -- per-symbol objects ----------------------------------------------
+    def explode(self):
+        """Split every unit listed in manifest 'per_function' into one unit per symbol.
+
+        Symbols that reference each other cyclically cannot live in separate objects (z80asm
+        scans a library once), so strongly connected components are merged into one unit.
+        References are found by identifier scan, including asm blocks (which use '_name')."""
+        for uname in self.cfg.get('per_function', []) or []:
+            u = self.units.get(uname)
+            if not u:
+                continue
+            n = len(u['chunks'])
+            if any(sy is None for sy in u['syms']):
+                warn(f"per_function: {uname} has chunks without a symbol; left whole")
+                continue
+            idx = {}
+            for i, sy in enumerate(u['syms']):
+                idx.setdefault(sy, []).append(i)
+            edges = [set() for _ in range(n)]
+            for i, text in enumerate(u['chunks']):
+                for t in set(re.findall(r'\w+', text)):
+                    for cand in (t, t[1:] if t.startswith('_') else None):
+                        for j in idx.get(cand, ()):
+                            if j != i:
+                                edges[i].add(j)
+            # Tarjan SCC (iterative-safe sizes are small; recursion is fine)
+            index, low, on, stack, comp = {}, {}, set(), [], {}
+            counter = [0]
+            def strong(v):
+                index[v] = low[v] = counter[0]; counter[0] += 1
+                stack.append(v); on.add(v)
+                for w in sorted(edges[v]):
+                    if w not in index:
+                        strong(w); low[v] = min(low[v], low[w])
+                    elif w in on:
+                        low[v] = min(low[v], index[w])
+                if low[v] == index[v]:
+                    members = []
+                    while True:
+                        w = stack.pop(); on.discard(w); members.append(w)
+                        if w == v:
+                            break
+                    for m in members:
+                        comp[m] = min(members)
+            for v in range(n):
+                if v not in index:
+                    strong(v)
+            groups = {}
+            for i in range(n):
+                groups.setdefault(comp[i], []).append(i)
+            newnames = {}
+            for rep, members in sorted(groups.items()):
+                base = u['syms'][rep].lstrip('_') or u['syms'][rep]
+                nm = base
+                while nm in self.units and nm != uname or nm in newnames.values():
+                    nm = nm + '_'
+                newnames[rep] = nm
+                if len(members) > 1:
+                    warn(f"per_function: {uname}: {', '.join(u['syms'][m] for m in members)} "
+                         f"are mutually dependent -> kept together as {nm}")
+            owner = {}
+            for rep, members in groups.items():
+                for m in members:
+                    owner[u['syms'][m]] = newnames[rep]
+            for rep, members in sorted(groups.items()):
+                nm = newnames[rep]
+                self.units[nm] = {'chunks': [u['chunks'][m] for m in members],
+                                  'inc': list(u['inc']),
+                                  'guards': [u['guards'][m] for m in members],
+                                  'syms': [u['syms'][m] for m in members]}
+            self.unit_order = [x for o in self.unit_order
+                               for x in ([newnames[r] for r in sorted(groups)] if o == uname else [o])]
+            if uname not in newnames.values():
+                del self.units[uname]
+            self.symbols = [(sy, owner.get(sy, un) if un == uname else un, k, src)
+                            for sy, un, k, src in self.symbols]
+
     # -- outputs ---------------------------------------------------------
     def variant_text(self, hname):
         blocks = self.variant_blocks.get(hname)
@@ -917,6 +995,7 @@ def main():
 
     for fname in cfg['sources']:
         g.process(fname)
+    g.explode()
     os.makedirs(a.out, exist_ok=True)
     g.write()
     # keep gen/.gitkeep

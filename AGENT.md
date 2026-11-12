@@ -83,6 +83,7 @@ repeatable (no hand edits of `gen/`).
 | anonymous `struct {..} var` | named `struct __t_var`, type in header, `extern` + definition split |
 | `#ifndef DISABLE_*` around top-level items | treated as "not defined": always compiled; the linker prunes |
 | `DISABLE_*` **inside** a function/asm body (`initNABULib`, `getChar`) | one unit per combination (`name__no_X__no_Y`); header redirects `name` by macro from the user's `DISABLE_*` defines |
+| units listed in `per_function` (manifest) | exploded into one object per symbol after rule assignment; symbols that reference each other cyclically are merged automatically (reported in `gen/report.txt`) |
 | `BIN_TYPE` conditionals | preserved; library built once per `BIN_TYPE`; CP/M-only units are skipped for homebrew via `units.txt` |
 | `FONT_*` (`selector_prefixes`) | each guarded `ASCII` becomes `ASCII_<FONT>` in its own unit; header does `#define ASCII ASCII_<FONT>` |
 | header-only RetroNET files (functions defined in `.h`) | prototypes in header, bodies in units |
