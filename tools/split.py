@@ -575,6 +575,9 @@ class Gen:
         self.selectors = cfg.get('selector_prefixes', ['FONT_'])
         self.public_c = cfg.get('public_c_files', {}) or {}
         self.base_header = cfg.get('base_header', 'NABU-LIB.h')
+        # z88dk 2.5's preprocessor prints uninitialised memory for a '#warning' with no text,
+        # and upstream uses empty ones as spacers. Dropping them loses nothing.
+        self.strip_empty_warnings = cfg.get('strip_empty_warnings', True)
         self.units = {}          # name -> dict(chunks, origins, guards)
         self.symbols = []        # (symbol, unit, kind, src)
         self.defined = {}        # symbol -> src (duplicate detection)
@@ -647,6 +650,9 @@ class Gen:
                 if is_header:
                     if it.dkind == 'include' and re.search(r'"[^"]+\.c"', it.darg or ''):
                         pieces.append(it.lead)
+                        continue
+                    if self.strip_empty_warnings and it.dkind == 'warning' and not it.darg:
+                        pieces.append(it.lead)       # z88dk 2.5 prints garbage for empty #warning
                         continue
                     pieces.append(it.lead + it.body)
                 else:

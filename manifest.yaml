@@ -19,6 +19,9 @@ sources:
   - RetroNET-Multiplayer.h
   - DirEntryReader.c       # needs copyBuf/UpperStr from the program, see public_c_files
 
+# Drop empty '#warning' lines from generated headers (z88dk 2.5 prints garbage for them)
+strip_empty_warnings: true
+
 base_header: NABU-LIB.h              # every *_internal.h includes this first
 
 # .c files that have no .h upstream but are meant to be #included by users.

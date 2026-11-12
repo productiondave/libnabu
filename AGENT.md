@@ -83,7 +83,7 @@ repeatable (no hand edits of `gen/`).
 | `FONT_*` (`selector_prefixes`) | each guarded `ASCII` becomes `ASCII_<FONT>` in its own unit; header does `#define ASCII ASCII_<FONT>` |
 | header-only RetroNET files (functions defined in `.h`) | prototypes in header, bodies in units |
 | `.c` with no `.h` meant to be included (`DirEntryReader.c`, `public_c_files`) | public `<stem>.h` generated; `unit_prelude` declares what the program must supply |
-| `#warning` lines in headers | kept (noisy, but faithful) |
+| empty `#warning` lines in headers | dropped (`strip_empty_warnings`): z88dk 2.5 prints uninitialised memory as the message. `#warning` lines *with* text are kept |
 
 `DirEntryReader.c` expects the *program* to define `copyBuf`, `COPY_BUF_LEN`, `UpperStr()`.
 `copyBuf`/`UpperStr` become link-time requirements; `COPY_BUF_LEN` is fixed at 128 in the library
