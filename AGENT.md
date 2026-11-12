@@ -33,14 +33,19 @@ gen/include/         headers users compile against (-I gen/include)
 gen/src/             one .c per unit
 ```
 
-Toolchain defaults to `../z88dk` (`Z88DIR`), as in nabu-games. `PyYAML` is required.
+Toolchain defaults to z88dk 2.5 at `../z88dk-2.5/z88dk` (`Z88DIR`; override in `Make.local` or on
+the make line). `PyYAML` is required. Last verified with z88dk v26997-37960a1a59-20261111.
+It is fine to adapt the generator/manifest to a newer z88dk, as long as the process stays
+repeatable (no hand edits of `gen/`).
 
 ## The procedure
 
-1. **Check upstream changed**: `git -C ../NABU-LIB log -1 --format=%h` / diff of `NABULIB/*`. Note
-   the version header comment in `NABU-LIB.h` ("Last updated on ...") for the report.
+1. **Check upstream changed**: `git -C ../NABU-LIB log -1 --format=%h` / diff of `NABULIB/*`
+   (the previous values are in the old `gen/report.txt`; copy it aside before regenerating).
 2. **Regenerate and build**: `make` (runs `tools/split.py` then builds both libs).
-   Read `gen/report.txt`.
+   Read `gen/report.txt`; its header records the upstream commit, the `NABU-LIB.h` "last updated"
+   date and the z88dk version used, so a changed result can be attributed to upstream or to the
+   compiler. Include these in your report.
 3. **Triage anything unmapped.** `report.txt` lists `UNMAPPED` symbols that fell to
    `default_unit` (`misc`). Run `python3 tools/split.py --strict` to make that a hard failure.
    Give each new symbol a home in `manifest.yaml` `rules` (first match wins), grouping by

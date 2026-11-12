@@ -13,8 +13,8 @@ sources are **generated** from upstream by a script and regenerated whenever ups
 
 ## Build
 
-Requirements: z88dk with SDCC (default location `../z88dk`), Python 3 with PyYAML, and an
-upstream checkout (default `../NABU-LIB/NABULIB`).
+Requirements: z88dk 2.5 with SDCC (default location `../z88dk-2.5/z88dk`), Python 3 with
+PyYAML, and an upstream checkout (default `../NABU-LIB/NABULIB`).
 
 ```sh
 make              # generate gen/ and build both libraries
@@ -119,7 +119,8 @@ build/               objects and libraries (not committed)
 
 ## Status
 
-Compiles and links for both targets; verified by link checks only (no emulator or hardware
+Compiles and links for both targets with z88dk 2.5 (v26997-37960a1a59-20261111); verified by
+link checks only (no emulator or hardware
 testing yet). Not yet done: an automated check that every public prototype has a library symbol.
 
 ## Licence and credits

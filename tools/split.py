@@ -31,6 +31,7 @@ import argparse
 import os
 import re
 import shutil
+import subprocess
 import sys
 from itertools import combinations
 
@@ -582,6 +583,7 @@ class Gen:
         self.unmapped = []
         self.unit_order = []
         self.pub_names = set()   # names declared by public (.h) headers
+        self.provenance = []
         self.preludes = {}       # origin include name -> text injected into units only
 
     # -- unit assignment ------------------------------------------------
@@ -846,11 +848,33 @@ class Gen:
             for s in self.symbols:
                 f.write(' '.join(s) + '\n')
         with open(os.path.join(out, 'report.txt'), 'w') as f:
+            f.write('\n'.join(self.provenance) + '\n\n')
             f.write('\n'.join(WARNINGS) + '\n')
             if self.unmapped:
                 f.write('\nUNMAPPED (fell back to default unit):\n')
                 for n, s in self.unmapped:
                     f.write(f'  {n}  ({s})\n')
+
+
+def upstream_info(up):
+    """Human-readable provenance of the upstream sources (commit, dirty flag, library version)."""
+    lines = [f'upstream dir:      {up}']
+    try:
+        def git(*a):
+            return subprocess.run(['git', '-C', up, *a], capture_output=True, text=True, check=True).stdout.strip()
+        commit = git('rev-parse', '--short', 'HEAD')
+        dirty = git('status', '--porcelain', '--', '.')
+        subject = git('log', '-1', '--format=%s')
+        lines.append(f'upstream commit:   {commit}{" (+ uncommitted changes)" if dirty else ""}  {subject}')
+    except Exception:
+        lines.append('upstream commit:   unknown (not a git checkout)')
+    try:
+        with open(os.path.join(up, 'NABU-LIB.h'), encoding='utf-8', errors='replace') as f:
+            m = re.search(r'Last updated on (\S+)', f.read(4000))
+        lines.append(f'NABU-LIB.h:        last updated {m.group(1) if m else "unknown"}')
+    except OSError:
+        pass
+    return lines
 
 
 def main():
@@ -859,6 +883,7 @@ def main():
     ap.add_argument('--manifest', default=os.path.join(root, 'manifest.yaml'))
     ap.add_argument('--upstream', help='upstream NABULIB directory (overrides manifest)')
     ap.add_argument('--out', default=os.path.join(root, 'gen'))
+    ap.add_argument('--z88dk-version', default='unknown', help='toolchain version string to record in report.txt')
     ap.add_argument('--strict', action='store_true', help='fail if any symbol is unmapped')
     ap.add_argument('--list', action='store_true', help='just list items found (for writing the manifest)')
     a = ap.parse_args()
@@ -872,6 +897,7 @@ def main():
         sys.exit(f'upstream dir not found: {up}')
 
     g = Gen(cfg, up, a.out)
+    g.provenance = upstream_info(up) + [f'z88dk:             {a.z88dk_version}']
     if a.list:
         for fname in cfg['sources']:
             with open(os.path.join(up, fname), encoding='utf-8', errors='replace') as f:
@@ -889,6 +915,7 @@ def main():
     g.write()
     # keep gen/.gitkeep
     open(os.path.join(a.out, '.gitkeep'), 'a').close()
+    print('\n'.join(g.provenance))
     print(f'{len(g.units)} units, {len(g.symbols)} symbols, {len(WARNINGS)} warnings; '
           f'{len(g.unmapped)} unmapped -> {a.out}')
     if a.strict and g.unmapped:

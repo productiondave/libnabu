@@ -11,8 +11,8 @@
 
 TOP := $(CURDIR)
 
-# Defaults mirror nabu-games: z88dk checked out next to this project.
-Z88DIR   ?= $(TOP)/../z88dk
+# Default: z88dk 2.5 checked out next to this project (override in Make.local or on the make line).
+Z88DIR   ?= $(TOP)/../z88dk-2.5/z88dk
 UPSTREAM ?=
 -include $(TOP)/Make.local
 
@@ -26,7 +26,8 @@ INC := -I$(TOP)/gen/include
 NABU_FLAGS := +nabu -vn -compiler=sdcc -DBIN_TYPE=BIN_HOMEBREW $(INC)
 CPM_FLAGS  := +cpm  -compiler=sdcc -DBIN_TYPE=BIN_CPM -O3 --opt-code-speed $(INC)
 
-SPLIT_ARGS := $(if $(UPSTREAM),--upstream $(UPSTREAM),) $(SPLIT_EXTRA)
+Z88DK_VERSION := $(shell $(ZCC) 2>&1 | head -1 | sed 's/^zcc - Frontend for the z88dk Cross-C Compiler - //')
+SPLIT_ARGS := $(if $(UPSTREAM),--upstream $(UPSTREAM),) --z88dk-version '$(Z88DK_VERSION)' $(SPLIT_EXTRA)
 
 .PHONY: all gen nabu cpm clean distclean libs smoke
 

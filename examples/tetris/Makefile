@@ -2,7 +2,7 @@
 #   make nabu   -> 000001.nabu  (+nabu, nabu_hb.lib)
 #   make cpm    -> TETRIS.COM   (+cpm,  nabu_cpm.lib)
 LIBNABU := $(abspath ../..)
-Z88DIR  ?= $(LIBNABU)/../z88dk
+Z88DIR  ?= $(LIBNABU)/../z88dk-2.5/z88dk
 -include $(LIBNABU)/Make.local
 
 export PATH := $(Z88DIR)/bin:$(PATH)
