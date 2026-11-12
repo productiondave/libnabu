@@ -29,7 +29,7 @@ CPM_FLAGS  := +cpm  -compiler=sdcc -DBIN_TYPE=BIN_CPM -O3 --opt-code-speed $(INC
 Z88DK_VERSION := $(shell $(ZCC) 2>&1 | head -1 | sed 's/^zcc - Frontend for the z88dk Cross-C Compiler - //')
 SPLIT_ARGS := $(if $(UPSTREAM),--upstream $(UPSTREAM),) --z88dk-version '$(Z88DK_VERSION)' $(SPLIT_EXTRA)
 
-.PHONY: all gen nabu cpm clean distclean libs smoke
+.PHONY: all gen nabu cpm clean distclean libs smoke check
 
 all: gen
 	$(MAKE) libs
@@ -70,6 +70,10 @@ smoke: libs
 	@mkdir -p build/smoke
 	$(ZCC) $(NABU_FLAGS) -m -create-app tests/smoke/main.c -Lbuild/nabu -lnabu_hb -o build/smoke/smoke_nabu
 	$(ZCC) $(CPM_FLAGS)  -m -create-app tests/smoke/main.c -Lbuild/cpm  -lnabu_cpm -o build/smoke/smoke_cpm
+
+# Public API cross-check: every symbol upstream's headers declare must exist in each library
+check: libs
+	$(PYTHON) tools/check_api.py --z88dk $(Z88DIR) $(if $(UPSTREAM),--upstream $(UPSTREAM),)
 
 clean:
 	rm -rf build

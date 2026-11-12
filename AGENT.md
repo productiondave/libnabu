@@ -57,6 +57,10 @@ repeatable (no hand edits of `gen/`).
    loop into the right unit (the loop is usually a single symbol; `z88dk-z80nm build/nabu/x.o`
    shows Symbols (`G`) and Externs (`U`)).
 6. **Run the checks** (all must pass, for both libs):
+   - `make check` (public API cross-check): every function/variable upstream's headers declare must
+     exist in each lib. `MISSING` = upstream defines it but the lib lacks it (fix grouping/
+     transformation; exit 1). `WARNING ... never defined upstream` = upstream bug (declared, no
+     body; e.g. `vt_foregroundColor`) - not an error, mention it in the report.
    - `make smoke` links `tests/smoke/main.c` against both libs.
    - `make -C examples/tetris` builds `000001.nabu` and `tetris.com`.
    - Confirm pruning still works: in the `.map` of the smoke/tetris build, units for features the
@@ -108,15 +112,13 @@ repeatable (no hand edits of `gen/`).
   `cp gen/symbols.txt /tmp/before.txt` before regenerating, then `diff`);
 - new manifest rules you added and why; any script change and the general construct it handles;
 - warnings in `report.txt` (variants, unmapped);
-- result of each check in step 6, with object counts (`make` output) and the module lists from
-  the maps;
+- result of each check in step 6, with object counts (`make` output), the `make check` summary
+  and the module lists from the maps;
 - anything that needs the user's decision (e.g. a new upstream dependency on the including
   program, like `DirEntryReader`'s).
 
 ## Known gaps
 
-- No automated cross-check that every prototype in the public headers has a symbol in the libs
-  (do it by hand: names in `gen/symbols.txt` vs `z88dk-z80nm build/*/nabu_*.lib`).
 - `nabu-games.{h,c}`-style helpers (the games' own header-includes-.c layer) are not part of
   this library; the tetris example carries its own copies.
 - Inline assembly stays inline; no `.asm` extraction. Asm blocks reference C symbols by name and

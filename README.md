@@ -19,6 +19,7 @@ PyYAML, and an upstream checkout (default `../NABU-LIB/NABULIB`).
 ```sh
 make              # generate gen/ and build both libraries
 make smoke        # link-only smoke test against both libraries
+make check        # verify every symbol upstream's headers declare exists in each library
 make clean        # remove build/   (distclean also empties gen/)
 ```
 
@@ -109,6 +110,7 @@ the report to produce are in [AGENT.md](AGENT.md), written so an agent can repea
 manifest.yaml        symbol -> unit mapping and per-file settings
 tools/split.py       generator
 tools/order_objs.py  object ordering / cycle check
+tools/check_api.py   public API cross-check (make check)
 Makefile             build
 AGENT.md             regeneration procedure
 tests/smoke/         link-only smoke test
@@ -121,7 +123,7 @@ build/               objects and libraries (not committed)
 
 Compiles and links for both targets with z88dk 2.5 (v26997-37960a1a59-20261111); verified by
 link checks only (no emulator or hardware
-testing yet). Not yet done: an automated check that every public prototype has a library symbol.
+testing yet). `make check` confirms the libraries export the full public API.
 
 ## Licence and credits
 
