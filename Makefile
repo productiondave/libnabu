@@ -23,8 +23,8 @@ Z80ASM := $(Z88DIR)/bin/z88dk-z80asm
 PYTHON ?= python3
 
 INC := -I$(TOP)/gen/include
-NABU_FLAGS := +nabu -vn -compiler=sdcc -DBIN_TYPE=BIN_HOMEBREW $(INC)
-CPM_FLAGS  := +cpm  -compiler=sdcc -DBIN_TYPE=BIN_CPM -O3 --opt-code-speed $(INC)
+NABU_FLAGS := +nabu -vn -compiler=sdcc -DBIN_TYPE=BIN_HOMEBREW -Cs--disable-warning -Cs283 $(INC)
+CPM_FLAGS  := +cpm  -compiler=sdcc -DBIN_TYPE=BIN_CPM -O3 --opt-code-speed -Cs--disable-warning -Cs283 $(INC)
 
 Z88DK_VERSION := $(shell $(ZCC) 2>&1 | head -1 | sed 's/^zcc - Frontend for the z88dk Cross-C Compiler - //')
 SPLIT_ARGS := $(if $(UPSTREAM),--upstream $(UPSTREAM),) --z88dk-version '$(Z88DK_VERSION)' $(SPLIT_EXTRA)
