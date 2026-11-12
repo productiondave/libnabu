@@ -1,0 +1,115 @@
+# manifest.yaml - the only hand-maintained input to tools/split.py.
+# Maps upstream symbols to library units (one unit == one .c == one object in the .lib).
+# The linker only pulls in the objects a program references, so group things that are
+# always used together, and keep rarely-used or big things (fonts, filestore, sprites) apart.
+
+upstream: ../NABU-LIB/NABULIB        # override: make UPSTREAM=... or Make.local
+
+# Processed in this order (also the order of definitions inside a unit).
+sources:
+  - NABU-LIB.h
+  - NABU-LIB.c
+  - NabuTracker.h
+  - NabuTracker.c
+  - patterns.h
+  - RetroNET-FileStore.h
+  - RetroNET-FileStore.c
+  - RetroNET-IAControl.h
+  - RetroNET-CPMDrive.h
+  - RetroNET-Multiplayer.h
+  - DirEntryReader.c       # needs copyBuf/UpperStr from the program, see public_c_files
+
+base_header: NABU-LIB.h              # every *_internal.h includes this first
+
+# .c files that have no .h upstream but are meant to be #included by users.
+# Their declarations (defines, structs, prototypes, externs) become a public <stem>.h
+public_c_files:
+  DirEntryReader.c:
+    includes: ["<stdint.h>", "<stdbool.h>", "<string.h>"]
+    # Upstream expects the *including program* to define copyBuf, COPY_BUF_LEN and UpperStr().
+    # In a library those become link-time requirements, and this prelude (library units only,
+    # NOT the public header) declares them. The program must define:
+    #     uint8_t copyBuf[N];              // N >= 128
+    #     void UpperStr(uint8_t *s);
+    # If it does not, linking fails with 'undefined symbol _copyBuf' / '_UpperStr', but only
+    # if the program actually uses DirEntryReader.
+    # COPY_BUF_LEN is a compile-time constant that gets baked into the library, so it is fixed
+    # at upstream's documented minimum (128): DirMoveFirst clears the first 128 bytes of
+    # copyBuf instead of all of it. BDOS fills the buffer afterwards anyway.
+    unit_prelude: |
+      extern uint8_t copyBuf[];
+      void UpperStr(uint8_t *s);
+      #define COPY_BUF_LEN 128
+
+# Macros that choose ONE of several definitions of the same name (fonts).
+# Each guarded definition becomes NAME_<SELECTOR> in its own unit.
+selector_prefixes: [FONT_]
+
+# Fallbacks when no rule matches
+file_defaults:
+  NabuTracker.c: nabutracker
+  NabuTracker.h: nabutracker
+  DirEntryReader.c: direntry
+  RetroNET-IAControl.h: ia_control
+  RetroNET-CPMDrive.h: cpm_drive
+  RetroNET-Multiplayer.h: multiplayer
+  RetroNET-FileStore.c: rn_misc
+  RetroNET-FileStore.h: rn_misc
+default_unit: misc                   # anything landing here is reported as UNMAPPED
+
+# First matching rule wins. 'symbols' = exact names, 'match' = regexes.
+rules:
+  - unit: core
+    symbols: [nop, NABU_DisableInterrupts, NABU_EnableInterrupts, RightShift, _randomSeed]
+  - unit: ay
+    match: ['^ay(Read|Write)$', '^playNoteDelay$', '^initNABULIBAudio$', '^_NOTES_']
+  - unit: hcca_rx            # receive ISR + ring buffer + everything that reads it
+    match: ['^_?isrHCCARX$', '^_rxBuffer', '^hcca_(read|ping|isRx|getSize)']
+  - unit: hcca_tx
+    match: ['^hcca_write']
+  # Library units must form a DAG (z80asm scans a .lib once; see tools/order_objs.py).
+  # readLine() calls getChar(), which needs the keyboard buffers -> keep it out of 'keyboard'.
+  - unit: readLine
+    symbols: [readLine]
+  - unit: keyboard
+    match: ['^_?isrKeyboard$', '^_kbdBuffer', '^_lastKeyboard', '^_joyStatus$',
+            '^(getChar|getKey|isKeyPressed|readLine|getJoyStatus)$']
+  - unit: vt52               # CP/M only (BIN_TYPE guard -> not built for homebrew)
+    match: ['^_?vt_', '^isCloudCPM$']
+  - unit: vdp_core
+    match: ['^vdp_(setRegister|setWriteAddress|setReadAddress)$',
+            '^_vdp_(outBlock|fill|loadThirds|fillThirds)$']
+  - unit: vdp_isr
+    match: ['^waitVdpISR$', '^vdp_(enable|wait|disable)VDPReadyInt$', '^vdp_(add|remove)ISR$',
+            '^_vdp_ISR$', '^vdpStatusRegVal$', '^vdpIsReady$', '^_vdpInterruptEnabled$']
+  - unit: vdp_sprite
+    match: ['^vdp_.*[Ss]prite']
+  - unit: vdp_gfx
+    match: ['^vdp_plot', '^_vdpBitMask$']
+  # Generic name-table/text buffer: used by every VDP mode that has a name table (Text, G1, ...),
+  # so it must NOT live in vdp_text (a G1-only program should not link the print routines).
+  - unit: vdp_buffer
+    match: ['^_vdp_textBuffer$', '^vdp_(refreshViewPort|getCharAtLocation|setCharAtLocationBuf)']
+  # Text-mode printing/cursor/scrolling only
+  - unit: vdp_text
+    match: ['^_vdp_(printSetup|handleEOL)$',
+            '^vdp_(print|newLine|setCursor|write|scrollText)']
+  - unit: vdp_screen
+    match: ['^vdp_(clearVRAM|clearScreen|fillScreen|clearRows|loadASCIIFont|putPattern|loadPattern|loadColor|colorizePattern|setBackDropColor|setTextColor)']
+  - unit: vdp_init
+    match: ['^vdp_init']
+  - unit: vdp_state
+    match: ['^_vdp[A-Z]', '^_autoScroll', '^vdp_cursor$']
+
+  # RetroNET file store
+  - unit: rn_di
+    match: ['^hcca_Di', '^_rnFS_INT_BACKUP$']
+  - unit: rn_file
+    match: ['^_?rn_(f|F)ile', '^_rn_(readFileDetails|copyMove)$']
+  - unit: rn_dir
+    match: ['^_?rn_[dD]ir']
+  - unit: rn_tcp
+    match: ['^rn_TCP']
+  - unit: rn_shell
+    match: ['^rn_Shell']
+  # everything else in the file store -> rn_misc (file_defaults)

@@ -1,0 +1,18 @@
+# Generated output: never commit. Regenerate with `make gen`.
+/gen/*
+!/gen/.gitkeep
+
+# Build output
+/build/
+
+# Local overrides
+Make.local
+
+# Example build output
+/examples/*/*.com
+/examples/*/*.COM
+/examples/*/*.nabu
+/examples/*/*.NABU
+/examples/*/*.lis
+/examples/*/*.map
+/examples/*/tetris
