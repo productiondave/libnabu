@@ -655,6 +655,11 @@ class Gen:
                     if self.strip_empty_warnings and it.dkind == 'warning' and not it.darg:
                         pieces.append(it.lead)       # z88dk 2.5 prints garbage for empty #warning
                         continue
+                    if it.dkind == 'warning' and it.darg:
+                        # informational config notices: let programs silence them
+                        pieces.append(it.lead + '#ifndef NABU_NO_CONFIG_WARNINGS\n'
+                                      + it.body.lstrip('\n').rstrip('\n') + '\n#endif\n')
+                        continue
                     pieces.append(it.lead + it.body)
                 else:
                     if it.dkind in ('define', 'undef', 'pragma') or (
@@ -778,12 +783,50 @@ class Gen:
                            unit_guards, origin_inc, fname, newname, 'var')
         return hdr_text
 
+    def handle_asm_split(self, it, body, lead, fname, origin_inc):
+        """A __naked function that only holds a library of asm helpers (manifest 'asm_split').
+
+        Each helper starts with a comment header '; nl_name: ...' (preceded by a dashes line).
+        Split it into one naked function per helper, named after the label, so each can be
+        assigned to its own unit by the normal rules and the linker only pulls in the helpers
+        used. Cross-helper references become PUBLIC/EXTERN in link_asm_labels(). Helpers must
+        not fall through into the next one; that is checked."""
+        m = re.search(r'__asm\b(.*)__endasm', body, re.S)
+        if not m:
+            return False
+        lines = m.group(1).split('\n')
+        starts = []
+        for i, l in enumerate(lines):
+            h = re.match(r'\s*;\s*([A-Za-z_]\w*):', l)
+            if h and i and re.match(r'\s*;\s*-{5,}\s*$', lines[i - 1]) and \
+                    re.search(r'^\s*%s:' % re.escape(h.group(1)), '\n'.join(lines[i:]), re.M):
+                starts.append((i - 1, h.group(1)))
+        if not starts:
+            return False
+        starts[0] = (0, starts[0][1])
+        for k, (a, name) in enumerate(starts):
+            b = starts[k + 1][0] if k + 1 < len(starts) else len(lines)
+            grp = lines[a:b]
+            code = [re.sub(r';.*', '', l).strip() for l in grp]
+            code = [c for c in code if c and not c.endswith(':')]
+            if not code or not re.match(r'(ret\b|jp\s+[^(,]+$|jr\s+[^,]+$|reti|retn|def[bwms]\b|db\b|dw\b)', code[-1]):
+                warn(f"{fname}: asm helper {name} in {it.name} may fall through (ends with "
+                     f"'{code[-1] if code else ''}')")
+            text = (f'void {name}() __naked {{\n\n  __asm\n' + '\n'.join(grp).rstrip() +
+                    '\n\n  __endasm;\n}\n')
+            self.add_chunk(self.assign(name, fname), (lead if k == 0 else '') + text, it.guards,
+                           origin_inc, fname, name, 'asm-helper')
+        return True
+
     def handle_funcdef(self, it, fname, origin_inc, is_header, variant_protos):
         if it.dead:
             return
         body = strip_storage(it.body)
         dm = body_disable_macros(it.body)
         lead = '' if is_header else it.lead
+        if not dm and it.name in (self.cfg.get('asm_split') or []):
+            if self.handle_asm_split(it, body, lead, fname, origin_inc):
+                return
         if not dm:
             unit = self.assign(it.name, fname)
             self.add_chunk(unit, lead + body + '\n', it.guards, origin_inc, fname, it.name, 'func')
@@ -878,6 +921,58 @@ class Gen:
                 del self.units[uname]
             self.symbols = [(sy, owner.get(sy, un) if un == uname else un, k, src)
                             for sy, un, k, src in self.symbols]
+
+    # -- asm labels shared between functions ------------------------------
+    ASM_BLOCK = re.compile(r'(__asm\b)(.*?)(__endasm)', re.S)
+    ASM_LABEL = re.compile(r'^[ \t]*([A-Za-z_]\w*):', re.M)
+
+    def link_asm_labels(self):
+        """Asm blocks may jump/call labels defined in *another* function's asm block (upstream is
+        one translation unit, so that just works). Once the functions are in different objects the
+        label must be PUBLIC in its defining object and EXTERN in each referencing one. Only labels
+        defined in exactly one unit and referenced from another unit are exported."""
+        def code(asm):
+            return re.sub(r';[^\n]*', '', asm)
+        defs = {}                                   # label -> set(unit)
+        for un, u in self.units.items():
+            for text in u['chunks']:
+                for m in self.ASM_BLOCK.finditer(text):
+                    for l in self.ASM_LABEL.findall(code(m.group(2))):
+                        defs.setdefault(l, set()).add(un)
+        defs = {l: next(iter(us)) for l, us in defs.items() if len(us) == 1}
+        refs = {}                                   # unit -> labels it needs from elsewhere
+        exported = set()
+        for un, u in self.units.items():
+            for text in u['chunks']:
+                for m in self.ASM_BLOCK.finditer(text):
+                    for t in set(re.findall(r'[A-Za-z_]\w*', code(m.group(2)))):
+                        if t in defs and defs[t] != un:
+                            refs.setdefault(un, set()).add(t)
+                            exported.add(t)
+        def patch(un, text):
+            def sub(m):
+                body = code(m.group(2))
+                lines = []
+                for l in sorted(exported):
+                    if defs[l] == un and re.search(r'^[ \t]*%s:' % re.escape(l), body, re.M):
+                        lines.append(f'      PUBLIC {l}')
+                for l in sorted(refs.get(un, ())):
+                    if re.search(r'\b%s\b' % re.escape(l), body):
+                        lines.append(f'      EXTERN {l}')
+                if not lines:
+                    return m.group(0)
+                inner = m.group(2)
+                # jr cannot reach another object: relative jumps to external labels become jp
+                for l in sorted(refs.get(un, ())):
+                    inner = re.sub(r'(?m)^([ \t]*(?:\w+:[ \t]*)?)jr([ \t]+(?:(?:nz|z|nc|c)[ \t]*,[ \t]*)?%s\b)'
+                                   % re.escape(l), r'\1jp\2', inner)
+                    if re.search(r'(?m)^[^;\n]*\bdjnz[ \t]+%s\b' % re.escape(l), inner):
+                        warn(f"asm in unit {un}: djnz to external label {l} cannot be linked")
+                return m.group(1) + '\n' + '\n'.join(lines) + inner + m.group(3)
+            return self.ASM_BLOCK.sub(sub, text)
+        for un, u in self.units.items():
+            u['chunks'] = [patch(un, t) for t in u['chunks']]
+        self.asm_labels = sorted(exported)
 
     # -- outputs ---------------------------------------------------------
     def variant_text(self, hname):
@@ -996,6 +1091,7 @@ def main():
     for fname in cfg['sources']:
         g.process(fname)
     g.explode()
+    g.link_asm_labels()
     os.makedirs(a.out, exist_ok=True)
     g.write()
     # keep gen/.gitkeep

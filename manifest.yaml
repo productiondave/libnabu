@@ -53,6 +53,10 @@ selector_prefixes: [FONT_]
 per_function: [multiplayer, ia_control, rn_file, rn_dir, rn_tcp, rn_shell, rn_misc, cpm_drive,
                vdp_init, vdp_screen, vdp_sprite, vdp_gfx, direntry, vt52]
 
+# __naked functions that are libraries of asm helpers: one object per helper (see
+# Gen.handle_asm_split). Helpers are named by their label, so rules match them by label name.
+asm_split: [_nabulib_vdpCore, _nabulib_memCore]
+
 # Fallbacks when no rule matches
 file_defaults:
   NabuTracker.c: nabutracker
@@ -69,6 +73,8 @@ default_unit: misc                   # anything landing here is reported as UNMA
 rules:
   - unit: core
     symbols: [nop, NABU_DisableInterrupts, NABU_EnableInterrupts, RightShift, _randomSeed]
+  - unit: core
+    symbols: [_nabulib_memCore, nl_memset]   # shared asm helper; labels exported by split.py
   - unit: ay
     match: ['^ay(Read|Write)$', '^playNoteDelay$', '^initNABULIBAudio$', '^_NOTES_']
   - unit: hcca_rx            # receive ISR + ring buffer + everything that reads it
@@ -84,12 +90,14 @@ rules:
             '^(getChar|getKey|isKeyPressed|readLine|getJoyStatus)$']
   - unit: vt52               # CP/M only (BIN_TYPE guard -> not built for homebrew)
     match: ['^_?vt_', '^isCloudCPM$']
-  - unit: vdp_core
-    match: ['^vdp_(setRegister|setWriteAddress|setReadAddress)$',
+  - unit: vdp_core           # nl_* = asm helpers split out of _nabulib_vdpCore (asm_split)
+    match: ['^_nabulib_vdpCore$', '^nl_(wrAddr|outA|vregInc|loadThirds)$', '^vdp_(setRegister|setWriteAddress|setReadAddress)$',
             '^_vdp_(outBlock|fill|loadThirds|fillThirds)$']
   - unit: vdp_isr
     match: ['^waitVdpISR$', '^vdp_(enable|wait|disable)VDPReadyInt$', '^vdp_(add|remove)ISR$',
             '^_vdp_ISR$', '^vdpStatusRegVal$', '^vdpIsReady$', '^_vdpInterruptEnabled$']
+  - unit: vdp_sprite
+    match: ['^nl_sprite(Addr|Off)$']
   - unit: vdp_sprite
     match: ['^vdp_.*[Ss]prite']
   - unit: vdp_gfx
@@ -97,10 +105,10 @@ rules:
   # Generic name-table/text buffer: used by every VDP mode that has a name table (Text, G1, ...),
   # so it must NOT live in vdp_text (a G1-only program should not link the print routines).
   - unit: vdp_buffer
-    match: ['^_vdp_textBuffer$', '^vdp_(refreshViewPort|getCharAtLocation|setCharAtLocationBuf)']
+    match: ['^nl_(rowOff|nameOff|writeCharAt)$', '^_vdp_textBuffer$', '^vdp_(refreshViewPort|getCharAtLocation|setCharAtLocationBuf)']
   # Text-mode printing/cursor/scrolling only
   - unit: vdp_text
-    match: ['^_vdp_(printSetup|handleEOL)$',
+    match: ['^nl_(printSetup|handleEOL)$', '^_vdp_(printSetup|handleEOL)$',
             '^vdp_(print|newLine|setCursor|write|scrollText)']
   - unit: vdp_screen
     match: ['^vdp_(clearVRAM|clearScreen|fillScreen|clearRows|loadASCIIFont|putPattern|loadPattern|loadColor|colorizePattern|setBackDropColor|setTextColor)']
