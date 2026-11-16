@@ -124,3 +124,36 @@ repeatable (no hand edits of `gen/`).
   this library; the tetris example carries its own copies.
 - Inline assembly stays inline; no `.asm` extraction. Asm blocks reference C symbols by name and
   rely on z80asm auto-extern - a missing symbol shows up as a link error, not at generation time.
+
+## Z80-Retro target (`nabu_retro.lib`)
+
+`make` also builds `build/retro/nabu_retro.lib` and `gen/retro/include/` for the Z80-Retro SBC
+(10 MHz, TMS9118A VDP on 0x80/0x81, CP/M, no AY chip, no interrupts, no RetroNET). It is the
+CP/M build plus an **overlay**; the `nabu` and `cpm` outputs are unaffected (regenerating them
+must stay byte-identical, check with a `diff -r` of `gen/include`, `gen/src`).
+
+- **Where it lives:** `manifest.yaml` section `retro:` (`exclude_sources`, `remove`, `replace`,
+  `api_excluded`, `header`), hand-written units in `retro/src/`, and the rationale for every
+  difference in `retro/DELTA.md`. Generated with `tools/split.py --target retro` (-> `gen/retro`).
+- **How it works:** symbols matching `retro.remove` are dropped from whichever unit upstream puts
+  them in; each `retro.replace` file is appended to the named unit as one chunk (before `explode`
+  and `link_asm_labels`, so it gets PUBLIC/EXTERN labels like generated code); `retro.header`
+  patches port numbers / `Joy_*` bits in the generated `NABU-LIB.h` and appends overrides
+  (`#undef` of upstream macros that become functions).
+- **`vdp_refreshViewPort` is a fixed contract.** `retro/src/vdp_buffer_refresh.c` is the fork's
+  routine (z80retro-lib 8262f71): `outi` / `jp nz`, 26 T-states per byte, so a full refresh fits the
+  VDP blanking window at 60 fps. Never replace it with upstream's `nl_outBlock` call or add pacing.
+  After any change run the check below. The other bulk writers (`nl_outA`, `nl_outBlock`, `nl_fill`)
+  are padded to the fork's `vdp_put` spacing (about 5.6-6.0 us per byte at 10 MHz).
+- **After an upstream update**, for each `retro.replace` file compare it with the upstream function
+  it replaces (`git -C ../NABU-LIB diff <old>..<new> -- NABULIB/NABU-LIB.c`) and re-check:
+  1. register contracts of the `nl_*` helpers the replacements call or replace (`nl_outA`,
+     `nl_outBlock`, `nl_fill`: which registers are preserved);
+  2. symbols the refresh routine reads (`_vdp_textBuffer`, `_vdpPatternNameTableAddr`,
+     `_vdpTextBufferSize`);
+  3. anything new upstream that touches NABU-only hardware (HCCA, AY, keyboard ISR, `0xFF2x` BIOS
+     variables, the `dec c` latch/data trick in `initNABULIBAudio`). Add it to `retro.remove` or
+     `retro.replace` and to `retro/DELTA.md`.
+  Then `make`, `make check` (reports the intentionally absent set), `make smoke`, and verify the
+  refresh loop bytes (`ed a3 c2 ..` = `outi` / `jp nz`) in the linked `smoke_retro` binary.
+- **Test status:** snake, tetris and invaders (nabu-games) verified on a Z80-Retro and on the Nouveau board with `vram_pad: {block: 6, a: 4, loop: 1}`. The audio path (0xB0/0xB1) is exercised by the Nouveau only. Not covered: `vdp_plotHires`/`vdp_plotColor`, `vdp_getCharAtLocationVRAM` (read-back path, still upstream's 3.58 MHz read delay).

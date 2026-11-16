@@ -588,6 +588,11 @@ class Gen:
         self.pub_names = set()   # names declared by public (.h) headers
         self.provenance = []
         self.preludes = {}       # origin include name -> text injected into units only
+        # Z80-Retro overlay (--target retro): symbols to drop, chunks to add, header patches
+        self.retro = cfg.get('retro') if cfg.get('_target') == 'retro' else None
+        self._drop = [re.compile(p) for p in (self.retro or {}).get('remove', [])]
+        self._replacing = False
+        self.dropped = []        # symbols removed by the overlay (for report.txt)
 
     # -- unit assignment ------------------------------------------------
     def assign(self, name, src):
@@ -600,7 +605,13 @@ class Gen:
         self.unmapped.append((name, src))
         return self.default_unit
 
+    def retro_drops(self, name):
+        return bool(self.retro) and any(r.search(name) for r in self._drop)
+
     def add_chunk(self, unit, text, guards, origin_include, src, symbol=None, kind=None):
+        if symbol and not self._replacing and self.retro_drops(symbol):
+            self.dropped.append(symbol)
+            return
         u = self.units.setdefault(unit, {'chunks': [], 'inc': [], 'guards': [], 'syms': []})
         u['chunks'].append(wrap(guards, text))
         u['syms'].append(symbol)
@@ -845,6 +856,79 @@ class Gen:
                     variant_protos.append((it.name, vname, dm, defset, make_proto(text), it.guards))
         # prototype for variants' base is the normal one in the header
 
+    # -- Z80-Retro overlay -------------------------------------------------
+    def apply_retro(self, root):
+        """Add the hand-written Retro units (manifest retro.replace). Symbols they replace were
+        already dropped by add_chunk (manifest retro.remove). Runs before explode() and
+        link_asm_labels(), so the replacements take part in per_function splitting and get their
+        PUBLIC/EXTERN labels like any generated code."""
+        assert self.retro is not None
+        self._replacing = True
+        for ent in self.retro.get('replace', []):
+            path = os.path.join(root, ent['file'])
+            with open(path, encoding='utf-8') as f:
+                text = f.read()
+            for k, v in (self.retro.get('vram_pad') or {}).items():
+                text = text.replace('@PAD_%s@' % k.upper(), str(int(v)))
+            if re.search(r'@PAD_\w+@', text):
+                warn(f"{ent['file']}: unresolved @PAD_*@ token (manifest retro.vram_pad)")
+            unit = ent['unit']
+            header = f"// RETRO OVERLAY: {ent['file']}\n"
+            syms = ent['symbols']
+            self.add_chunk(unit, header + text.rstrip('\n') + '\n', [], 'NABU-LIB_internal.h', ent['file'],
+                           syms[0], 'retro')
+            u = self.units[unit]
+            for inc in ('NABU-LIB.h', 'NABU-LIB_internal.h'):
+                if inc not in u['inc']:
+                    u['inc'].append(inc)
+            for extra in syms[1:]:
+                self.symbols.append((extra, unit, 'retro', ent['file']))
+        self._replacing = False
+
+    def apply_retro_patches(self):
+        """manifest retro.patch: insert asm after matching lines of upstream functions that keep
+        their own VRAM write loops (they bypass the paced helpers). Each entry:
+        {symbols: [...], after: '<asm line regex>', insert: '<asm line>'}. Must match at least once."""
+        for ent in self.retro.get('patch', []):
+            pat = re.compile(r'^([ \t]*)(' + ent['after'] + r')[ \t]*$', re.M)
+            for sym in ent['symbols']:
+                hit = 0
+                for u in self.units.values():
+                    for i, (sy, text) in enumerate(zip(u['syms'], u['chunks'])):
+                        if sy != sym:
+                            continue
+                        new, n = pat.subn(lambda m: m.group(0) + '\n' + m.group(1) + ent['insert'], text)
+                        u['chunks'][i] = new
+                        hit += n
+                if not hit:
+                    warn(f"retro.patch: no line matching /{ent['after']}/ in {sym}")
+
+    def retro_header(self, name, text):
+        r = self.retro
+        if not r or name != self.base_header:
+            return text
+        for sym, port in (r.get('header', {}).get('sfr') or {}).items():
+            pat = re.compile(r'^__sfr __at 0x[0-9A-Fa-f]+ ' + re.escape(sym) + r';[ \t]*\n', re.M)
+            if not pat.search(text):
+                warn(f'retro header: port declaration for {sym} not found')
+                continue
+            text = pat.sub('' if port is None else f'__sfr __at 0x{port:02X} {sym};\n', text, count=1)
+        add = r.get('header', {}).get('add_sfr', []) or []
+        if add:
+            m = re.search(r'^__sfr __at', text, re.M)      # start of a line, not the middle of one
+            k = m.start() if m else 0
+            text = text[:k] + ''.join(l.rstrip('\n') + '\n' for l in add) + text[k:]
+        for sym, val in (r.get('header', {}).get('enum') or {}).items():
+            pat = re.compile(r'(\b' + re.escape(sym) + r'\s*=\s*)[^,\n]+')
+            if not pat.search(text):
+                warn(f'retro header: enum value {sym} not found')
+                continue
+            text = pat.sub(lambda m: m.group(1) + str(val), text, count=1)
+        extra = r.get('header', {}).get('append')
+        if extra:
+            text += '\n// ---- Z80-Retro overrides (manifest retro.header.append) ----\n' + extra
+        return text
+
     # -- per-symbol objects ----------------------------------------------
     def explode(self):
         """Split every unit listed in manifest 'per_function' into one unit per symbol.
@@ -977,11 +1061,13 @@ class Gen:
     # -- outputs ---------------------------------------------------------
     def variant_text(self, hname):
         blocks = self.variant_blocks.get(hname)
-        if not blocks:
+        if not blocks or all(self.retro_drops(b[0]) for b in blocks):
             return ''
         out = ['\n// ---- generated: DISABLE_* variants (selected at compile time by the macros below) ----\n']
         by_name = {}
         for base, vname, dm, defset, proto, guards in blocks:
+            if self.retro_drops(base) or self.retro_drops(vname):
+                continue
             by_name.setdefault(base, {'dm': dm, 'v': []})['v'].append((vname, defset, proto, guards))
         for base, info in by_name.items():
             for vname, defset, proto, guards in info['v']:
@@ -1003,7 +1089,7 @@ class Gen:
                 shutil.rmtree(d)
             os.makedirs(d)
         for name, text in self.headers.items():
-            text = text + self.variant_text(name)
+            text = self.retro_header(name, text + self.variant_text(name))
             banner = f'// GENERATED by tools/split.py - DO NOT EDIT. Edit manifest.yaml / split.py instead.\n'
             with open(os.path.join(out, 'include', name), 'w') as f:
                 f.write(banner + text)
@@ -1061,7 +1147,9 @@ def main():
     root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     ap.add_argument('--manifest', default=os.path.join(root, 'manifest.yaml'))
     ap.add_argument('--upstream', help='upstream NABULIB directory (overrides manifest)')
-    ap.add_argument('--out', default=os.path.join(root, 'gen'))
+    ap.add_argument('--out', default=None, help="output dir (default gen, or gen/retro with --target retro)")
+    ap.add_argument('--target', choices=['default', 'retro'], default='default',
+                    help="'retro' applies the Z80-Retro overlay (manifest 'retro:') and writes gen/retro")
     ap.add_argument('--z88dk-version', default='unknown', help='toolchain version string to record in report.txt')
     ap.add_argument('--strict', action='store_true', help='fail if any symbol is unmapped')
     ap.add_argument('--list', action='store_true', help='just list items found (for writing the manifest)')
@@ -1069,6 +1157,12 @@ def main():
 
     with open(a.manifest) as f:
         cfg = yaml.safe_load(f)
+    if a.out is None:
+        a.out = os.path.join(root, 'gen', 'retro') if a.target == 'retro' else os.path.join(root, 'gen')
+    if a.target == 'retro':
+        cfg['_target'] = 'retro'
+        gone = set(cfg['retro'].get('exclude_sources', []))
+        cfg['sources'] = [x for x in cfg['sources'] if x not in gone]
     up = a.upstream or cfg.get('upstream', '../NABU-LIB/NABULIB')
     if not os.path.isabs(up):
         up = os.path.normpath(os.path.join(root, up))
@@ -1090,6 +1184,10 @@ def main():
 
     for fname in cfg['sources']:
         g.process(fname)
+    if g.retro:
+        g.apply_retro(root)
+        g.apply_retro_patches()
+        g.provenance.append(f'target:            retro overlay, {len(g.dropped)} upstream symbols dropped/replaced')
     g.explode()
     g.link_asm_labels()
     os.makedirs(a.out, exist_ok=True)

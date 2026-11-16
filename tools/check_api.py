@@ -81,6 +81,13 @@ def main():
 
     libs = {'hb': os.path.join(a.build, 'nabu', 'nabu_hb.lib'),
             'cpm': os.path.join(a.build, 'cpm', 'nabu_cpm.lib')}
+    # Z80-Retro overlay (manifest 'retro:'): a CP/M build minus what the Retro cannot have.
+    retro = cfg.get('retro') or {}
+    retro_skip = set(retro.get('exclude_sources', []))
+    retro_excl = [re.compile(r) for r in retro.get('api_excluded', [])]
+    retro_lib = os.path.join(a.build, 'retro', 'nabu_retro.lib')
+    if retro and os.path.exists(retro_lib):
+        libs['retro'] = retro_lib
     for t, l in libs.items():
         if not os.path.exists(l):
             sys.exit(f'{l} not found - run make first')
@@ -90,6 +97,7 @@ def main():
         if fname.endswith('.h'):
             for name, guards in declared(os.path.join(up, fname), selectors):
                 api.setdefault(name, (guards, fname))
+    retro_api = {n for n, (g, h) in api.items() if h in retro_skip}
     # .c files that are public headers upstream-style (DirEntryReader.c): their definitions are API
     for fname, _ in (cfg.get('public_c_files') or {}).items():
         for name, guards in declared(os.path.join(up, fname), selectors):
@@ -111,7 +119,12 @@ def main():
     for t, lib in libs.items():
         syms = lib_symbols(nm, lib)
         names = {s[1:] for s in syms if s.startswith('_')}
-        expected = {n: h for n, (g, h) in api.items() if split.guard_active(g, t)}
+        gt = 'cpm' if t == 'retro' else t
+        expected = {n: h for n, (g, h) in api.items() if split.guard_active(g, gt)}
+        if t == 'retro':
+            gone = {n for n in expected if n in retro_api or any(r.search(n) for r in retro_excl)}
+            expected = {n: h for n, h in expected.items() if n not in gone}
+            print(f'-- retro: {len(gone)} upstream symbols intentionally absent (RetroNET/HCCA/text80/keyboard ISR)')
         absent = sorted(n for n in expected if n not in names)
         missing = [n for n in absent if n in defined]
         upstream_bug = [n for n in absent if n not in defined]

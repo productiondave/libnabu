@@ -129,3 +129,102 @@ rules:
   - unit: rn_shell
     match: ['^rn_Shell']
   # everything else in the file store -> rn_misc (file_defaults)
+
+# ---------------------------------------------------------------------------------------------
+# Z80-Retro overlay. Only used by `tools/split.py --target retro` (make retro) -> gen/retro,
+# build/retro/nabu_retro.lib. The nabu / cpm outputs are not affected.
+# What each entry is for, and why, is written down in retro/DELTA.md.
+# ---------------------------------------------------------------------------------------------
+retro:
+  # Needs the RetroNET adapter (HCCA over the NABU bus). Not built for the Retro.
+  exclude_sources:
+    - RetroNET-FileStore.h
+    - RetroNET-FileStore.c
+    - RetroNET-IAControl.h
+    - RetroNET-CPMDrive.h
+    - RetroNET-Multiplayer.h
+
+  # Symbols (regex) dropped from whatever unit upstream puts them in. Includes the ones that
+  # `replace` below provides again in Retro form.
+  remove:
+    - '^_?isrHCCARX$'
+    - '^_rxBuffer'
+    - '^hcca_'
+    - '^_?isrKeyboard$'
+    - '^_kbdBuffer'
+    - '^_lastKeyboard'
+    - '^_joyStatus$'
+    - '^initNABULib'
+    - '^initNABULIBAudio$'
+    - '^getChar'
+    - '^getKey$'
+    - '^isKeyPressed$'
+    - '^getJoyStatus$'
+    - '^isCloudCPM$'
+    - '^vdp_(waitVDPReadyInt|enableVDPReadyInt|disableVDPReadyInt|addISR|removeISR)$'
+    - '^waitVdpISR$'
+    - '^vdp_initTextMode80$'       # V9938/F18A register setup: no Retro equivalent
+    - '^nl_outA$'
+    - '^_vdp_(outBlock|fill)$'
+    - '^vdp_refreshViewPort$'
+
+  # Hand-written units. Each file is appended as one chunk to the named (upstream) unit.
+  replace:
+    - {unit: core,       file: retro/src/core.c,                 symbols: [initNABULib]}
+    - {unit: ay,         file: retro/src/ay.c,                   symbols: [initNABULIBAudio]}
+    - {unit: keyboard,   file: retro/src/keyboard.c,             symbols: [getKey, isKeyPressed, getChar, getJoyStatus]}
+    - {unit: vdp_isr,    file: retro/src/vdp_isr.c,              symbols: [vdp_waitVDPReadyInt, waitVdpISR, vdp_enableVDPReadyInt, vdp_disableVDPReadyInt, vdp_addISR, vdp_removeISR]}
+    - {unit: vt52,       file: retro/src/vt52.c,                 symbols: [isCloudCPM]}
+    - {unit: vdp_core,   file: retro/src/vdp_core_outA.c,        symbols: [nl_outA, nl_vramDelay]}
+    - {unit: vdp_core,   file: retro/src/vdp_core_block.c,       symbols: [_vdp_outBlock, _vdp_fill]}
+    - {unit: vdp_buffer, file: retro/src/vdp_buffer_refresh.c,   symbols: [vdp_refreshViewPort]}
+
+  # VRAM write pacing (10 MHz). Per-byte spacing in T-states: block = 16*N+28, a = 16*N+44 after the OUT,
+  # loop = 16*N+50 added to upstream's own loop body. 10 MHz: 100 T-states = 10 us. The fork's real
+  # spacing is ~12 us. Raise these if patterns/text still garble, lower them once verified on hardware.
+  vram_pad: {block: 6, a: 4, loop: 1}
+
+  # Upstream loops that write VRAM themselves: add a delay after the OUT.
+  patch:
+    - {symbols: [vdp_print, vdp_printPart, vdp_loadASCIIFontWithInverse],
+       after: 'out \(_IO_VDPDATA\), a', insert: 'call nl_vramDelay'}
+
+  # Public API symbols that are intentionally absent from nabu_retro.lib (used by `make check`).
+  api_excluded:
+    - '^hcca_'
+    - '^rn_'
+    - '^ia_'
+    - '^mp_'
+    - '^vdp_initTextMode80$'
+    - '^_?(rxBuffer|kbdBuffer|lastKeyboard|joyStatus)'
+
+  header:
+    # port number overrides in NABU-LIB.h (null = delete the declaration)
+    sfr:
+      IO_VDPDATA: 0x80
+      IO_VDPLATCH: 0x81
+      IO_AYDATA: 0xB1
+      IO_AYLATCH: 0xB0
+      IO_HCCA: null
+      IO_KEYBOARD: null
+      IO_KEYBOARD_STATUS: null
+      IO_CONTROL: null
+    add_sfr:
+      - 'volatile __sfr __at 0xA8 IO_JOY0;'
+      - 'volatile __sfr __at 0xA9 IO_JOY1;'
+    # Joystick bits are the Retro port bits (active low port, inverted by getJoyStatus)
+    enum:
+      Joy_Left: '0b00000100'
+      Joy_Down: '0b01000000'
+      Joy_Right: '0b00100000'
+      Joy_Up: '0b10000000'
+      Joy_Button: '0b00000001'
+    append: |
+      #define TARGET_RETRO 1
+      // These are macros upstream (NABU keyboard ISR state / VDP interrupt flag). On the Retro
+      // they are real functions: joystick port reads and polling of the VDP INT line.
+      #undef getJoyStatus
+      uint8_t getJoyStatus(uint8_t joyNum);
+      #undef vdp_waitVDPReadyInt
+      void vdp_waitVDPReadyInt();
+      #undef hcca_isRxBufferAvailable

@@ -35,6 +35,7 @@ Outputs:
 |---|---|---|
 | `build/nabu/nabu_hb.lib` | NABU homebrew (`000001.nabu`) | `+nabu -DBIN_TYPE=BIN_HOMEBREW` |
 | `build/cpm/nabu_cpm.lib` | NABU CP/M (`.com`) | `+cpm -DBIN_TYPE=BIN_CPM -O3 --opt-code-speed` |
+| `build/retro/nabu_retro.lib` | Z80-Retro SBC, CP/M (`.com`) | `+cpm -DBIN_TYPE=BIN_CPM -DTARGET_RETRO -O3 --opt-code-speed`, headers in `gen/retro/include` |
 | `gen/include/*.h` | headers to compile against | |
 
 ## Using the library
@@ -66,6 +67,15 @@ zcc +cpm -compiler=sdcc -DBIN_TYPE=BIN_CPM -I libnabu/gen/include main.c \
 ```
 
 See `examples/tetris` for a complete program (`make -C examples/tetris`).
+
+### Z80-Retro
+
+`nabu_retro.lib` is the CP/M build plus an overlay for the [Z80-Retro](https://github.com/Z80-Retro) (VDP on 0x80/0x81,
+joystick on 0xA8/0xA9, polled VDP frame sync, no AY chip, no interrupts, no RetroNET). Compile with
+`-I libnabu/gen/retro/include -DTARGET_RETRO` and link `-Llibnabu/build/retro -lnabu_retro`. HCCA, RetroNET and
+`vdp_initTextMode80` are not available. The AY functions remain (ports 0xB0/0xB1, for an optional audio card).
+Every difference, and why, is listed in [retro/DELTA.md](retro/DELTA.md); the procedure for keeping it in
+step with upstream is in [AGENT.md](AGENT.md). Verified on hardware with the nabu-games snake, tetris and invaders (Z80-Retro and Nouveau).
 
 ### Differences from upstream you may notice
 
