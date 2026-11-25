@@ -947,6 +947,15 @@ class Gen:
             idx = {}
             for i, sy in enumerate(u['syms']):
                 idx.setdefault(sy, []).append(i)
+            # asm labels defined inside a chunk (e.g. a shared entry point reached by 'jr label'
+            # from another function) count as that chunk's symbols, if defined by exactly one chunk
+            lab = {}
+            for i, text in enumerate(u['chunks']):
+                for l in set(re.findall(r'^[ \t]*([A-Za-z_]\w*):', text, re.M)):
+                    lab.setdefault(l, set()).add(i)
+            for l, owners in lab.items():
+                if len(owners) == 1 and l not in idx:
+                    idx[l] = [next(iter(owners))]
             edges = [set() for _ in range(n)]
             for i, text in enumerate(u['chunks']):
                 for t in set(re.findall(r'\w+', text)):

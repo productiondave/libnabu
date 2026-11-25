@@ -11,6 +11,8 @@ sources:
   - NABU-LIB.c
   - NabuTracker.h
   - NabuTracker.c
+  - NabuTrackerV2.h
+  - NabuTrackerV2.c
   - patterns.h
   - RetroNET-FileStore.h
   - RetroNET-FileStore.c
@@ -61,6 +63,8 @@ asm_split: [_nabulib_vdpCore, _nabulib_memCore]
 file_defaults:
   NabuTracker.c: nabutracker
   NabuTracker.h: nabutracker
+  NabuTrackerV2.c: nabutracker2
+  NabuTrackerV2.h: nabutracker2
   DirEntryReader.c: direntry
   RetroNET-IAControl.h: ia_control
   RetroNET-CPMDrive.h: cpm_drive
@@ -114,6 +118,8 @@ rules:
     match: ['^vdp_(clearVRAM|clearScreen|fillScreen|clearRows|loadASCIIFont|putPattern|loadPattern|loadColor|colorizePattern|setBackDropColor|setTextColor)']
   - unit: vdp_init
     match: ['^vdp_init']
+  - unit: vdp_detect         # F18A/PICO9918 probe (uses VRAM 0x3F00 scratch); rarely used
+    match: ['^vdp_detectF18A$', '^_nl_f18aSaved$']
   - unit: vdp_state
     match: ['^_vdp[A-Z]', '^_autoScroll', '^vdp_cursor$']
 
